@@ -52,7 +52,7 @@ Show current index status: number of indexed files, watched paths, and index sto
                          ┌──────────────┼──────────────┐
                          │              │              │
                    ┌─────▼─────┐  ┌────▼────┐  ┌─────▼─────┐
-                   │  Indexer   │  │ Watcher │  │ Background│
+                   │  Indexer  │  │ Watcher │  │ Background│
                    │ (tantivy) │  │ (notify)│  │   Task    │
                    └───────────┘  └─────────┘  │(debounced)│
                                                └───────────┘
