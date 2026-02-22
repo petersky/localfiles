@@ -1,6 +1,6 @@
-mod indexer;
 mod server;
-mod watcher;
+use localfiles::indexer;
+use localfiles::watcher;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;

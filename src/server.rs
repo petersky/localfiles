@@ -8,8 +8,8 @@ use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
 use tokio::sync::RwLock;
 
-use crate::indexer::FileIndex;
-use crate::watcher;
+use localfiles::indexer::FileIndex;
+use localfiles::watcher;
 
 /// Shared state between MCP handler, background watcher task, and indexer.
 pub struct SharedState {
@@ -33,12 +33,30 @@ pub struct SearchRequest {
     pub query: String,
     #[schemars(description = "Maximum number of results to return (default: 10)")]
     pub limit: Option<usize>,
+    #[schemars(description = "Filter results by file extension (e.g. \"rs\", \"py\", \"js\"). Omit to search all file types.")]
+    pub file_type: Option<String>,
+    #[schemars(description = "Limit results to files whose path matches these directory components (e.g. \"src\", \"tests\"). Components are matched individually, not as a substring.")]
+    pub path_prefix: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct IndexPathsRequest {
     #[schemars(description = "List of file or directory paths to index and watch")]
     pub paths: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReadFileRequest {
+    #[schemars(description = "Absolute path of the indexed file to read")]
+    pub path: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListFilesRequest {
+    #[schemars(description = "Filter by file extension (e.g. \"yaml\", \"rs\"). Omit to list all files.")]
+    pub file_type: Option<String>,
+    #[schemars(description = "Filter to files whose path contains this substring (e.g. \"src/\", \"config/\")")]
+    pub path_prefix: Option<String>,
 }
 
 // -- MCP Server --
@@ -59,24 +77,45 @@ impl FileSearchServer {
     }
 
     #[tool(
-        description = "Search indexed files by keyword. Returns matching file paths and text snippets with relevance scores."
+        description = "Search indexed files by keyword. Returns matching file paths, snippets, and relevance scores. \
+        Performs full-text search with relevance ranking across all indexed files. \
+        Supports natural language queries and boolean operators (AND, OR, NOT). \
+        Supports field-based queries: extension:rs, directory:config, content:error. \
+        Combine with boolean operators: extension:yaml AND database. \
+        Prefer this over grep/find for broad keyword searches across large codebases."
     )]
     async fn search(&self, Parameters(req): Parameters<SearchRequest>) -> String {
         let limit = req.limit.unwrap_or(10);
         let state = self.state.read().await;
-        match state.index.search(&req.query, limit) {
+        match state.index.search(
+            &req.query,
+            limit,
+            req.file_type.as_deref(),
+            req.path_prefix.as_deref(),
+        ) {
             Err(e) => format!("Search error: {}", e),
-            Ok(results) if results.is_empty() => "No results found.".to_string(),
-            Ok(results) => {
+            Ok(output) if output.results.is_empty() => "No results found.".to_string(),
+            Ok(output) => {
                 let mut out = String::new();
-                for (i, r) in results.iter().enumerate() {
+                for (i, r) in output.results.iter().enumerate() {
+                    let path_display = match r.line_number {
+                        Some(ln) => format!("{}:{}", r.file_path, ln),
+                        None => r.file_path.clone(),
+                    };
                     out.push_str(&format!(
                         "{}. {} (score: {:.2})\n   Path: {}\n   Snippet: {}\n\n",
                         i + 1,
                         r.file_name,
                         r.score,
-                        r.file_path,
+                        path_display,
                         r.snippet
+                    ));
+                }
+                if output.total_count > output.results.len() {
+                    out.push_str(&format!(
+                        "(showing {} of {} total matches)\n",
+                        output.results.len(),
+                        output.total_count
                     ));
                 }
                 out
@@ -144,6 +183,36 @@ impl FileSearchServer {
             status.index_path,
         )
     }
+
+    #[tool(
+        description = "Read the full contents of an indexed file by its path. Only files that have been indexed via index_paths can be read."
+    )]
+    async fn read_file(&self, Parameters(req): Parameters<ReadFileRequest>) -> String {
+        let state = self.state.read().await;
+        match state.index.read_file(&req.path) {
+            Ok(content) => content,
+            Err(e) => format!("Error reading file: {}", e),
+        }
+    }
+
+    #[tool(
+        description = "List all indexed file paths, optionally filtered by file extension or path prefix."
+    )]
+    async fn list_files(&self, Parameters(req): Parameters<ListFilesRequest>) -> String {
+        let state = self.state.read().await;
+        let files = state.index.list_files(
+            req.file_type.as_deref(),
+            req.path_prefix.as_deref(),
+        );
+        if files.is_empty() {
+            "No indexed files match the given filters.".to_string()
+        } else {
+            let count = files.len();
+            let mut out = files.join("\n");
+            out.push_str(&format!("\n\n({} files)", count));
+            out
+        }
+    }
 }
 
 #[tool_handler]
@@ -152,7 +221,10 @@ impl ServerHandler for FileSearchServer {
         ServerInfo {
             instructions: Some(
                 "A local file search server. Use 'index_paths' to add directories, \
-                 then 'search' to find files by keyword. Use 'status' to check index state."
+                 then 'search' to find files by keyword. Use 'status' to check index state.\n\
+                 Prefer 'search' over grep/find for broad keyword searches — it provides \
+                 relevance-ranked full-text search across all indexed files with snippet context. \
+                 Use 'file_type' and 'path_prefix' parameters to narrow results."
                     .to_string(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

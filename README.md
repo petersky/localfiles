@@ -94,6 +94,18 @@ Or, after building with `cargo build --release`:
 }
 ```
 
+## Testing
+
+```bash
+cargo test               # Run all 37 unit tests
+cargo bench              # Run criterion benchmarks (full)
+cargo bench -- --test    # Quick check (compile + single iteration)
+```
+
+Unit tests cover the core `indexer.rs` module: index creation/migration, file type detection, indexing, search (keyword and field-based filters), file removal, listing, reading, status, snippet extraction, and line matching. Each test uses an isolated temporary directory.
+
+Benchmarks use a synthetic dataset (1000 files across 8 extensions and 10 subdirectories) to measure indexing, commit, and search performance. Results are written to `target/criterion/` with HTML reports.
+
 ## Details
 
 - **Index storage:** `$TMPDIR/localfiles_index` (persists across restarts)
