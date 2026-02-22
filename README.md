@@ -51,11 +51,11 @@ Show current index status: number of indexed files, watched paths, and index sto
                                         │
                          ┌──────────────┼──────────────┐
                          │              │              │
-                   ┌─────▼─────┐  ┌────▼────┐  ┌─────▼─────┐
-                   │  Indexer  │  │ Watcher │  │ Background│
-                   │ (tantivy) │  │ (notify)│  │   Task    │
-                   └───────────┘  └─────────┘  │(debounced)│
-                                               └───────────┘
+                   ┌─────▼─────┐   ┌────▼────┐   ┌─────▼─────┐
+                   │  Indexer  │   │ Watcher │   │ Background│
+                   │ (tantivy) │   │ (notify)│   │   Task    │
+                   └───────────┘   └─────────┘   │(debounced)│
+                                                 └───────────┘
 ```
 
 - **`src/main.rs`** — Entry point: stdio MCP server, spawns background watcher task
